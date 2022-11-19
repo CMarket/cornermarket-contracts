@@ -13,6 +13,10 @@ contract CornerMarketStorage {
     uint constant HUNDRED_PERCENT = 10000;
     uint constant MAX_REWARD_RATE = 2000;
     uint constant MAX_SALE_PERIOD = 180 days;
+    uint constant PROFIT_TYPE_BUY_REFERRER = 1;
+    uint constant PROFIT_TYPE_COUPON_REFERRER = 2;
+    uint constant PROFIT_TYPE_PLATFORM = 3;
+    uint constant PROFIT_TYPE_MERCHANT = 4;
     enum CouponStatus{
         NOT_EXISTS,
         SELLING,
@@ -85,7 +89,7 @@ contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver {
     event ReferrerRewardRateChange(RewardRateTarget target, uint newRewardRate, uint oldRewardRate);
     event PlatformAccountChange(address indexed newPlatformAccount, address oldPlatformAccount);
     event Verified(uint tokenId, uint amount, address indexed fromAccount, address indexed payToken, uint totalAmount);
-    event Settlement(uint tokenId, address indexed account, address payToken, uint sharedAmount);
+    event Settlement(uint tokenId, uint profitType, address indexed account, address payToken, uint sharedAmount);
     event WithdrawEarnings(address indexed account, address payToken, uint amount);
     event CouponSaleTimeExtended(uint tokenId, uint newEndTime, uint oldEndTime);
     event Take(address account, address token, uint takeAmount);
@@ -222,7 +226,7 @@ contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver {
             //referrer get paid and remove this part from total
             revenue[referrerAddress].earnings[cms.payToken] += referrerReward;
             _withdraw(cms.payToken, referrerAddress);
-            emit Settlement(id, referrerAddress, cms.payToken, referrerReward);
+            emit Settlement(id, PROFIT_TYPE_BUY_REFERRER, referrerAddress, cms.payToken, referrerReward);
             assignableAmount -= referrerReward;
         }
         if (couponReferrerRewardRate > 0) {
@@ -233,20 +237,20 @@ contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver {
             }
             revenue[referrerAddress].earnings[cms.payToken] += referrerReward;
             _withdraw(cms.payToken, referrerAddress);
-            emit Settlement(id, referrerAddress, cms.payToken, referrerReward);
+            emit Settlement(id, PROFIT_TYPE_COUPON_REFERRER, referrerAddress, cms.payToken, referrerReward);
             assignableAmount -= referrerReward;
         }
         if (platformRewardRate > 0) {
             uint referrerReward = totalAmount * platformRewardRate / HUNDRED_PERCENT;
             revenue[platformAccount].earnings[cms.payToken] += referrerReward;
             _withdraw(cms.payToken, platformAccount);
-            emit Settlement(id, platformAccount, cms.payToken, referrerReward);
+            emit Settlement(id, PROFIT_TYPE_PLATFORM, platformAccount, cms.payToken, referrerReward);
             assignableAmount -= referrerReward;
         }
         //merchant get paid
         revenue[cms.owner].earnings[cms.payToken] += assignableAmount;
         _withdraw(cms.payToken, cms.owner);
-        emit Settlement(id, cms.owner, cms.payToken, assignableAmount);
+        emit Settlement(id, PROFIT_TYPE_MERCHANT, cms.owner, cms.payToken, assignableAmount);
 
         cms.verified += amount;
     }

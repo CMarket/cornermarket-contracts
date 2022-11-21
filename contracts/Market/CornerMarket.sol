@@ -210,7 +210,7 @@ contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver, R
         return (revenue[user].earnings[token], revenue[user].withdrawn[token]);
     }
 
-    function verifyCoupon(uint id, uint amount) external {
+    function verifyCoupon(uint id, uint amount) external nonReentrant {
         CouponMetadataStorage storage cms = coupons[id];
         require(getBlockTimestamp() >= cms.useStart && getBlockTimestamp() <= cms.useEnd, "out of use day ranges");
         IVoucher(couponContract).safeTransferFrom(msg.sender, address(this), id, amount, "");
@@ -258,7 +258,7 @@ contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver, R
         cms.verified += amount;
     }
 
-    function refundCoupon(uint id, uint amount, address receiver) external {
+    function refundCoupon(uint id, uint amount, address receiver) external nonReentrant {
         CouponMetadataStorage storage cms = coupons[id];
         IVoucher(couponContract).safeTransferFrom(msg.sender, address(this), id, amount, "");
         IVoucher(couponContract).burn(address(this), id, amount);

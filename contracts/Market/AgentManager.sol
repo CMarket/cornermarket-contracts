@@ -2,10 +2,11 @@
 pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./library/TransferHelper.sol";
 import "./interfaces/ICornerMarket.sol";
 
-contract AgentManager is AccessControl {
+contract AgentManager is AccessControl, ReentrancyGuard {
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     address public payToken;
     address public cornerMarket;
@@ -26,7 +27,7 @@ contract AgentManager is AccessControl {
         _setupRole(OPERATOR_ROLE, msg.sender);
     }
 
-    function deposit() external {
+    function deposit() external nonReentrant {
         require(!validate[msg.sender], "already validated");
         TransferHelper.safeTransferFrom(payToken, msg.sender, address(this), depositAmount);
         collaterals[msg.sender] += depositAmount;

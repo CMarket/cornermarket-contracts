@@ -11,7 +11,6 @@ contract AgentManager is AccessControl {
     address public cornerMarket;
     uint public depositAmount;
     uint public fines;
-    uint public adminWithdrawnAmount;
     mapping(address => uint) public collaterals;
     mapping(address => bool) public validate;
     event Deposit(address account, address payToken, uint depositAmount);

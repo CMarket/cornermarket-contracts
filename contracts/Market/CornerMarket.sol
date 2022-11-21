@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./library/TransferHelper.sol";
 import "./interfaces/IVoucher.sol";
 import "./interfaces/IAgentManager.sol";
@@ -77,7 +78,7 @@ contract CornerMarketStorage {
     mapping(address => uint) public referrerExitTime;
 }
 
-contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver {
+contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver, ReentrancyGuard {
     using Counters for Counters.Counter;
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     event CouponCreated(uint tokenId, CouponMetadata meta);
@@ -114,6 +115,7 @@ contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver {
         require(meta.saleEnd - meta.saleStart <= MAX_SALE_PERIOD, "sale time error");
         require(supportTokens[meta.payToken], "token not supported");
         require(IAgentManager(agentManager).validate(meta.referrer), "referrer is not a valid agent");
+        require(meta.referrer == msg.sender, "only agents can create coupon");
         tokenId.increment();
         uint id = tokenId.current();
         coupons[id] = CouponMetadataStorage({
@@ -147,6 +149,7 @@ contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver {
         CouponMetadataStorage storage cms = coupons[id];
         require(cms.status == CouponStatus.SELLING, "invalid coupon");
         emit CouponStatusChange(id, CouponStatus.BLOCK, cms.status);
+        cms.status = CouponStatus.BLOCK;
     }
 
     function setSupportToken(address token, bool support) external onlyRole(OPERATOR_ROLE) {
@@ -182,14 +185,14 @@ contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver {
         agentManager = _agentManager;
     }
 
-    function buyCoupon(uint id, uint amount, address receiver, address referrer) external {
+    function buyCoupon(uint id, uint amount, address receiver, address referrer) external nonReentrant {
         CouponMetadataStorage storage cms = coupons[id];
         require(cms.status == CouponStatus.SELLING, "coupon not for sale");
         require(supportTokens[cms.payToken], "token not supported");
         require(cms.sold + amount - cms.refund <= cms.quota, "exceed quota");
-        require(cms.quota >= cms.sold + amount, "coupon not for sale");
+        require(getBlockTimestamp() >= cms.saleStart && getBlockTimestamp() <= cms.saleEnd, "invalid sale period");
         uint payAmount = cms.pricePerCoupon * amount;
-        IERC20(cms.payToken).transferFrom(msg.sender, address(this), payAmount);
+        TransferHelper.safeTransferFrom(cms.payToken, msg.sender, address(this), payAmount);
         deposit[cms.payToken] += payAmount;
         cms.sold += amount;
         emit BuyCoupon(msg.sender, id, amount, cms.payToken, payAmount, receiver);
@@ -262,7 +265,7 @@ contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver {
 
         uint refundAmount = cms.pricePerCoupon * amount;
         cms.refund += amount;
-        IERC20(cms.payToken).transfer(receiver, refundAmount);
+        TransferHelper.safeTransfer(cms.payToken, receiver, refundAmount);
         
         emit Refund(id, amount, msg.sender, cms.payToken, refundAmount, receiver);
     }
@@ -279,7 +282,7 @@ contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver {
         uint withdrableAmount = revenue[account].earnings[token] - revenue[account].withdrawn[token];
         if (withdrableAmount > 0) {
             revenue[account].withdrawn[token] = revenue[account].earnings[token];
-            IERC20(token).transfer(account, withdrableAmount);
+            TransferHelper.safeTransfer(token, account, withdrableAmount);
             emit WithdrawEarnings(account, token, withdrableAmount);
         }
     }

@@ -18,6 +18,8 @@ contract CornerMarketStorage {
     uint constant PROFIT_TYPE_COUPON_REFERRER = 2;
     uint constant PROFIT_TYPE_PLATFORM = 3;
     uint constant PROFIT_TYPE_MERCHANT = 4;
+    uint constant PROFIT_TYPE_REFUND_TAX = 5;
+    uint constant REFUND_TAX_RATE_MAX = 1000;
     enum CouponStatus{
         NOT_EXISTS,
         SELLING,
@@ -30,7 +32,6 @@ contract CornerMarketStorage {
     }
     struct CouponMetadata{
         address owner;
-        address referrer;
         address payToken;
         uint pricePerCoupon;
         uint saleStart;
@@ -38,6 +39,7 @@ contract CornerMarketStorage {
         uint useStart;
         uint useEnd;
         uint quota;
+        uint refundTaxRate;
     }
     struct CouponMetadataStorage{
         address owner;
@@ -49,6 +51,7 @@ contract CornerMarketStorage {
         uint useStart;
         uint useEnd;
         uint quota;
+        uint refundTaxRate;
         uint sold;
         uint refund;
         uint verified;
@@ -96,8 +99,10 @@ contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver, R
     event Take(address account, address token, uint takeAmount);
     event ReferrerExitTimeExtended(address account, uint newExitTime, uint oldExitTime);
     event AgentManagerChange(address newAgentManager, address oldAgentManager);
+    event ProtectPeriodChange(uint newPeriod, uint oldPeriod);
 
     constructor(address voucher, address _platformAccount) {
+        require(_platformAccount != address(0), "invalid platform account");
         protectPeriod = 180 days;
         buyReferrerRewardRate = 500; // 500 = 5%
         couponReferrerRewardRate = 200; // 200 = 2%
@@ -114,13 +119,13 @@ contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver, R
         require(meta.useEnd > meta.useStart, "use time error");
         require(meta.saleEnd - meta.saleStart <= MAX_SALE_PERIOD, "sale time error");
         require(supportTokens[meta.payToken], "token not supported");
-        require(IAgentManager(agentManager).validate(meta.referrer), "referrer is not a valid agent");
-        require(meta.referrer == msg.sender, "only agents can create coupon");
+        require(IAgentManager(agentManager).validate(msg.sender), "referrer is not a valid agent");
+        require(meta.refundTaxRate <= REFUND_TAX_RATE_MAX, "exceed max refund tax rate");
         tokenId.increment();
         uint id = tokenId.current();
         coupons[id] = CouponMetadataStorage({
             owner: meta.owner,
-            referrer: meta.referrer,
+            referrer: msg.sender,
             payToken: meta.payToken,
             pricePerCoupon: meta.pricePerCoupon,
             saleStart: meta.saleStart,
@@ -128,6 +133,7 @@ contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver, R
             useStart: meta.useStart,
             useEnd: meta.useEnd,
             quota: meta.quota,
+            refundTaxRate: meta.refundTaxRate,
             sold: 0,
             refund: 0,
             verified: 0,
@@ -135,9 +141,9 @@ contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver, R
         });
 
         emit CouponCreated(id, meta);
-        if (meta.useEnd > referrerExitTime[meta.referrer]) {
-            emit ReferrerExitTimeExtended(meta.referrer, meta.useEnd, referrerExitTime[meta.referrer]);
-            referrerExitTime[meta.referrer] = meta.useEnd;
+        if (meta.useEnd > referrerExitTime[msg.sender]) {
+            emit ReferrerExitTimeExtended(msg.sender, meta.useEnd, referrerExitTime[msg.sender]);
+            referrerExitTime[msg.sender] = meta.useEnd;
         }
     }
     
@@ -185,10 +191,13 @@ contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver, R
         agentManager = _agentManager;
     }
 
+    function setProtectPeriod(uint peroid) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        emit ProtectPeriodChange(peroid, protectPeriod);
+        protectPeriod = peroid;
+    }
     function buyCoupon(uint id, uint amount, address receiver, address referrer) external nonReentrant {
         CouponMetadataStorage storage cms = coupons[id];
         require(cms.status == CouponStatus.SELLING, "coupon not for sale");
-        require(supportTokens[cms.payToken], "token not supported");
         require(cms.sold + amount - cms.refund <= cms.quota, "exceed quota");
         require(getBlockTimestamp() >= cms.saleStart && getBlockTimestamp() <= cms.saleEnd, "invalid sale period");
         uint payAmount = cms.pricePerCoupon * amount;
@@ -265,6 +274,12 @@ contract CornerMarket is CornerMarketStorage, AccessControl, IERC1155Receiver, R
 
         uint refundAmount = cms.pricePerCoupon * amount;
         cms.refund += amount;
+        if (cms.refundTaxRate > 0) {
+            uint tax = refundAmount * cms.refundTaxRate / HUNDRED_PERCENT;
+            TransferHelper.safeTransfer(cms.payToken, cms.owner, tax);
+            emit Settlement(id, PROFIT_TYPE_REFUND_TAX, platformAccount, cms.payToken, tax);
+            refundAmount = refundAmount - tax;
+        }
         TransferHelper.safeTransfer(cms.payToken, receiver, refundAmount);
         
         emit Refund(id, amount, msg.sender, cms.payToken, refundAmount, receiver);
